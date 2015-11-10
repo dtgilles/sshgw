@@ -1,4 +1,4 @@
-FROM debian
+FROM debian:8
 
 ##### install ssh without private keys
 RUN    apt-get update \
