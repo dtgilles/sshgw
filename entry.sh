@@ -83,6 +83,7 @@ hostkeys=`ls "${HostKeys}"/*_key 2>/dev/null`
 if [ "${#hostkeys}" = 0 ]
    then
       dpkg-reconfigure -f noninteractive openssh-server   ##### create host keys if they do not exist
+      service openssh stop                                ##### but do not start ssh -- it could collide with later start command
       mkdir -p "${HostKeys}"                              ##### create host key dir if it doesn't exist
       if [ "${HostKeys}" != /etc/ssh ]
          then

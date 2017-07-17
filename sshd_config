@@ -5,8 +5,6 @@ Protocol 2
 #Privilege Separation is turned on for security
 UsePrivilegeSeparation sandbox
 # Lifetime and size of ephemeral version 1 server key
-KeyRegenerationInterval 3600
-ServerKeyBits 4096
 # Logging
 SyslogFacility AUTH
 LogLevel DEBUG
@@ -18,11 +16,9 @@ PermitEmptyPasswords no
 PermitTunnel no
 PermitUserEnvironment no
 StrictModes yes
-RSAAuthentication yes
 PubkeyAuthentication yes
 #AuthorizedKeysFile	/etc/user/%u/key
 IgnoreRhosts yes
-RhostsRSAAuthentication no
 HostbasedAuthentication no
 IgnoreUserKnownHosts yes
 ChallengeResponseAuthentication no
@@ -33,7 +29,6 @@ X11DisplayOffset 10
 PrintMotd no
 PrintLastLog no
 TCPKeepAlive yes
-UseLogin no
 #Subsystem sftp /usr/lib/openssh/sftp-server
 UsePAM yes
 AllowGroups ssh
