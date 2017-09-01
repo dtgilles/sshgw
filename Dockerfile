@@ -1,4 +1,4 @@
-FROM debian
+FROM debian:jessie
 MAINTAINER dtgilles@t-online.de
 
 ##### install ssh without private keys
