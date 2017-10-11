@@ -9,7 +9,8 @@ RUN    apt-get update \
 
 RUN    mkdir /var/run/sshd \
     && sed s/101/0/ /usr/sbin/policy-rc.d \
-    && rm -f /etc/ssh/*_key*
+    && rm -f /etc/ssh/*_key* \
+    && :> /etc/motd
 
 COPY sshd_config     /etc/ssh/sshd_config
 COPY entry.sh        /entry.sh
