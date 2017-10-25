@@ -1,4 +1,4 @@
-FROM debian:jessie
+FROM ubuntu:16.04
 MAINTAINER dtgilles@t-online.de
 
 ##### install ssh without private keys
