@@ -59,17 +59,18 @@ if [ -d "$UserDir" ]
                else
                   continue
                fi
-	    if ! getent passwd "$u" >/dev/null
+            if ! getent passwd "$u" >/dev/null
                then
-	          uid=""
-	          shell=""
-	          [ -f "$d/uid"      ] &&     uid="-u  `cat $d/uid`"
-	          [ -f "$d/shell"    ] &&   shell="-s  `cat $d/shell`"
-	          [ -f "$d/Groups"   ] &&  Groups="-G  `cat $d/Groups`"
+                  uid=""
+                  shell=""
+                  [ -f "$d/uid"      ] &&     uid="-u  `cat $d/uid`"
+                  [ -f "$d/shell"    ] &&   shell="-s  `cat $d/shell`"
+                  [ -f "$d/Groups"   ] &&  Groups="-G  `cat $d/Groups`"
                   useradd -g ssh $uid $shell $home -m "$u"
                fi
             mkdir -p "$HomeBase/$u/.ssh"
-            cp "$keyfile" "$HomeBase/$u/.ssh/authorized_keys"
+            cp "$keyfile" "$HomeBase/$u/.ssh/authorized_keys~"
+            mv            "$HomeBase/$u/.ssh/authorized_keys~" "$HomeBase/$u/.ssh/authorized_keys"
             chmod 755     "$HomeBase/$u/.ssh"
             chmod 644     "$HomeBase/$u/.ssh/authorized_keys"
             if [ -d "$UserDir/$u/"priv ]
