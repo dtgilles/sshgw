@@ -35,7 +35,7 @@ PrintMotd no
 PrintLastLog no
 TCPKeepAlive yes
 #Subsystem sftp /usr/lib/openssh/sftp-server
-UsePAM no
+UsePAM yes
 AllowGroups ssh
 # attention: BSI does NOT RECOMMEND to use ssh-rsa or ssh-dss
 PubkeyAcceptedKeyTypes    ssh-ed25519,ecdsa-sha2-nistp256,ecdsa-sha2-nistp384,ecdsa-sha2-nistp521,ssh-rsa,ssh-dss
