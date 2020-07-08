@@ -640,7 +640,7 @@ for c in iptables egrep getent tail awk wc date ls diff cp rm find ps head cut s
       || exitus 3 "could not determine path of command '$c'"
    done
 [ "$IpTables" = ""   ] && exitus 3 '$IpTables must be set, abort script'
-[ "$IpTables" = "no" ] || exitus 3 '$IpTables must not be 'no', abort script'
+[ "$IpTables" = "no" ] && exitus 3 '$IpTables must not be 'no', abort script'
 
 semaphore -s
 
