@@ -3,7 +3,7 @@ MAINTAINER dtgilles@t-online.de
 
 ##### install ssh without private keys
 RUN    apt-get update \
-    && DEBIAN_FRONTEND=noninteractive apt-get install -y ssh \
+    && DEBIAN_FRONTEND=noninteractive apt-get install -y ssh iptables \
     && apt-get clean \
     && find /var/lib/apt/lists -type f -exec rm -f {} \;
 
