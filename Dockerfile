@@ -7,14 +7,15 @@ RUN    apt-get update \
     && apt-get clean \
     && find /var/lib/apt/lists -type f -exec rm -f {} \;
 
-RUN    mkdir /var/run/sshd \
+RUN    mkdir -p /var/run/sshd /etc/rose/ipin/.current /etc/rose/ipout/.current /var/opt/rose /etc/rose/bin/ \
     && sed s/101/0/ /usr/sbin/policy-rc.d \
     && rm -f /etc/ssh/*_key* \
     && :> /etc/motd
 
 COPY sshd_config     /etc/ssh/sshd_config
 COPY entry.sh        /entry.sh
-COPY LoginSleep  add_user_keys.sh   /usr/local/bin/
+COPY LoginSleep      add_user_keys.sh   /usr/local/bin/
+COPY iptables.rose   iptables.conf      /etc/rose/bin/
 
 ENV SSHD_OPTS	""
 ENV LOGFILE	""

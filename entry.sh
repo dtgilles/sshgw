@@ -10,6 +10,13 @@
 ##### RootKey           here you can define one initial root key
 ##### LOGFILE           defines absolute path of logfile (realized by sshd option -E)
 #####                   if not set (default) regarding sshd option is "-e"
+##### IpTables          apply user based iptables
+#####                   - docker container must be started with
+#####                     --cap-add=NET_ADMIN --cap-add=NET_RAW
+#####                   - if $IpTables is
+#####                     yes          /etc/rose/bin/iptables.rose is used
+#####                     <script>     <script> is used
+#####                     ""|no        feature is disabled
 #
 #  $UserDir could be external mounted directory
 #  using this dir you can simply define the users
@@ -104,7 +111,8 @@ for f in ${hostkeys}
 /usr/local/bin/add_user_keys.sh
 
 ##### if there is an iptables script definned, then call it and send it to background
-if [ -f "$IpTables" ] && [ -x "$IpTables" ]
+[ "$IpTables" = "yes" ] && export IpTables=/etc/rose/bin/iptables.rose
+if [ -f "$IpTables"   ] && [ -x "$IpTables" ]
    then
       "$IpTables" start &
    fi

@@ -1,0 +1,740 @@
+#!/bin/bash
+#
+# RoSe iptables script
+#
+### BEGIN INIT INFO
+# Provides: iptables.rose
+# Required-Start: $network
+# Required-Stop: $network
+# Default-Start: 3 5
+# Default-Stop: 0 1 6
+# Description: Start the RoSe iptables rules
+### END INIT INFO
+
+# Shell functions sourced from /etc/rc.status:
+#      rc_check         check and set local and overall rc status
+#      rc_status        check and set local and overall rc status
+#      rc_status -v     ditto but be verbose in local rc status
+#      rc_status -v -r  ditto and clear the local rc status
+#      rc_failed        set local and overall rc status to failed
+#      rc_failed <num>  set local and overall rc status to <num>
+#      rc_reset         clear local rc status (overall remains)
+#      rc_exit          exit appropriate to overall rc status
+#sles#. /etc/rc.status
+
+# First reset status of this service
+#sles#rc_reset
+
+# Return values acc. to LSB for all commands but status:
+# 0 - success
+# 1 - generic or unspecified error
+# 2 - invalid or excess argument(s)
+# 3 - unimplemented feature (e.g. "reload")
+# 4 - insufficient privilege
+# 5 - program is not installed
+# 6 - program is not configured
+# 7 - program is not running
+#
+# Note that starting an already running service, stopping
+# or restarting a not-running service as well as the restart
+# with force-reload (in case signalling is not supported) are
+# considered a success.
+
+#####
+##### Configuration
+#####
+exec_level=1               ##### execute=1, dry-run=0
+allow_local_input=yes      ##### localhost is allowed to connect to each local port
+allow_all_ssh=yes
+ip6active=no
+log_at_chain_end=no        #####
+LOGFILE=/var/opt/rose/iptables.log
+semfile=/var/opt/rose/iptables.semaphore
+PATH="/sbin:/usr/sbin:/usr/bin:/usr/local/bin:${PATH}"
+default_policy=DROP        ##### if ACCEPT is set in config file, script works in some kind of soft mode:
+                           #####  - existing accept rules are used
+                           #####  - normally rejected connections would be written in a logfile
+                           #####  - this mode has to be activated by read system administrator for 
+                           #####    debugging only!
+
+[ -f /etc/rose/bin/iptables.conf ] && . /etc/rose/bin/iptables.conf
+if [ "${default_policy}" = DROP ]
+   then
+      default_rule=REJECT
+   else
+      default_policy=ACCEPT
+      default_rule=ACCEPT
+      log_at_chain_end=yes
+   fi
+
+[ "${log_at_chain_end}" = "yes" ] \
+&&   log_at_chain_end="LOG --log-prefix iptables.rose --log-uid"
+
+##### helper function to log to standard destination
+logit()
+   {
+      typeset rc=$?
+      [ -n "${1}" ] && [ "${1#-[0-9]}" = "" ] && rc=${1#-} && shift
+      typeset time="$(${date} +%Y-%m-%d/%H:%M:%S)"
+      typeset text="${time} $*"
+      echo "${text}" >> "${LOGFILE}" 2>/dev/null || echo "${text}" >&2
+      return ${rc}
+   }
+
+##### helper function to log and exit
+exitus() {
+    typeset rc=$1; shift
+    logit "end with rc=${rc}: $*"
+    #sles#rc_failed ${rc}
+    #sles#rc_status -v
+    #sles#rc_exit
+    exit ${rc}
+}
+
+#
+# utility for semaphore handling
+# $1 - PID of registered process
+# returns (stdout) trimmed info about PID and command line args
+#
+semaphore_ps()
+   {
+      "${ps}" -p "$1" -o pid,uid,args | "${sed}" '/^ *PID/d;s/^ *//g;s/  */ /g'
+   }
+
+#
+# $1 - cmd: '-s': set
+#           '-u': unset semaphore
+# $2 - semaphore name (maps to filename used)
+#
+# sets/unsets semaphore. semaphore name is bound to the actual PID
+# if the semaphore is 'red' but the named process it is not longer running
+# the semaphore is reset.
+# if the named process is running some (2) more attempts are done
+# and if stays to be 'red' an exit code is set and logged
+# in case of an attempt to unset a semaphore set by an other process an error is
+# indicated (logged and exit code)
+#
+semaphore()
+   {
+      ##### set some local variables
+      typeset ref_ps ref_pid cnt=20 inc=5
+      ref_ps=$( "${head}" -1 "${semfile}" 2>/dev/null)
+      ref_pid=$("${head}" -1 "${semfile}" 2>/dev/null | "${cut}" -d\  -f 1)
+      ##### check parameters
+      case "$1"
+         in
+            ##### parameter 1 = -s means "set semaphore"
+            -s) if [ "${ref_pid}" != "" ]
+                   ##### if reference pid is not empty
+                   then
+                      ##### wait until process is stopped
+                      while [ "${cnt}" -ge 0 ]&&[ "$(semaphore_ps ${ref_pid})" = "${ref_ps}" ]
+                         do
+                            sleep ${inc}
+                            cnt=$(( ${cnt} - ${inc} ))
+                            ##### ...but max 10 sec ($cnt=10)
+                         done
+                      ##### if reference pid is still active, then abort with error "semaphore error"
+                      [ "$(semaphore_ps ${ref_pid})" = "${ref_ps}" ] \
+                      && exitus  7 "semaphore error" \
+                         "could not set semaphore '${semfile}', related job is running..." \
+                         "${ref_ps}"
+                   fi
+                ##### set semaphore
+                semaphore_ps $$ > "${semfile}" && chmod 0644 "${semfile}"
+                ;;
+            ##### parameter 1 = -u means "unset semaphore"
+            -u) rm -f ${semfile} ;;
+            ##### parameter 1 is invalid - exit 3
+            *)  exitus 12 "semaphore error" "wrong usage of function semaphore ($*)" \
+                          "semaphore -s|-u"
+                ;;
+         esac
+      return 0
+   }
+
+##### do what to do and log the result
+#####
+##### usage:    doit [-e] "command" "describing comment"
+#####  -e       if this option and $exec_level are set "command" will be executed
+#####
+##### needs
+#####  - function logit
+#####  - external variable exec_level (determines if realy do what to do or run dry)
+#####
+##### supports global variables
+#####  - doit_value:      returns the stdout and stderr of the given command
+#####  - doit_rc:         returns the return code of the given command
+#####
+doit()
+   {
+      ##### global variables: doit_rc, doit_value
+      typeset doit_exec=1
+      if [ "$1" = -e ]
+         then
+            shift  ##### debug option prevents real system changes marked by option "-e"
+            [ "${exec_level}" -lt 1 ] && doit_exec=0
+         fi
+      typeset command="$1" comment="$2 $3" output=""
+      logit "call    ${command}"
+      if [ "${doit_exec}" = 1 ]
+         then
+            doit_value="$(eval ${command} 2>&1)"
+            doit_rc=$?
+         else
+            doit_value=">> eval \"${command}\" <<"
+            doit_rc=0
+         fi
+      logit "${doit_value}"
+      if [ "${doit_rc}" = 0 ]
+         then
+            logit "ok      ${comment}"
+         else
+            logit "error   ${comment}"
+         fi
+      return ${doit_rc}
+   }
+
+##### needs no external varialbes
+##### usage:   handle_input_table_from_file {-A|-D} file
+#####
+##### -A     add iptable rule described by file
+##### -D     delete iptable rule described by file
+#####
+handle_input_table_from_file()
+   {
+      #####   -A | -D
+      typeset action="$1" inputfile="$2" protocol="" source="" forward="" table="" prot="" rule="" ip="" port="" desc="" forw=""
+      typeset ipcmd=""  portspec=""
+      [ -f "${inputfile}" ] || return 1
+      if [ "${action}" = -D ]
+         then
+            typeset action_text="disabling"
+         else
+            typeset action_text="allowing"
+            typeset cfile="/etc/rose/ipin/.current/${inputfile##*/}"
+            doit -e "${cp} '${inputfile}' '${cfile}' && chmod 0644 '${cfile}'" \
+                    "remember applied input rule"
+         fi
+      "${egrep}" "^proto=|^proto6="  "${inputfile}" \
+      |  while read protocol source forward desc ##### forward and desc are not used yet
+            do
+               [ "${protocol#proto6=}" = "${protocol}" ] && ipcmd="${iptables}" || ipcmd="${ip6tables}"
+               prot="${protocol#proto=}"; prot="${prot#proto6=}"
+               rule="${source#rule=}"
+               forw="${forward#forward=}"
+               ip="${rule%%|*}"
+               port="${rule#$ip|}"
+               ##### syntax check
+               if [ "${prot}" = "${protocol}" ]||[ "${rule}" = "${source}" ]||[ "${forw}" = "${forward}" ]
+                  then
+                     logit "warning invalid firewall rule syntax for '${inputfile##*/}': '${protocol}' '${source}' '${forward}'"
+                     continue
+                  fi
+               if    [ "${prot%[^a-z0-9]*}"         != "${prot}" ] \
+                  || [ "${rule%[^-_:|,.0-9a-z/]*}"  != "${rule}" ] \
+                  || [ "${forw%[^-_:|,.0-9a-z]*}"   != "${forw}" ]
+                  then
+                     logit "warning forbidden characters found in '${inputfile##*/}': '${protocol}' '${source}' '${forward}'"
+                     continue
+                  fi
+               if [ "${inputfile##*/}" != ICMP ]
+                  then   #### if this is not an icmp message then specify port
+                     portspec="--dport '${inputfile##*/}'"
+                  else   ##### but if it is and port seems to be valid, interpret port as icmp-type
+                     [    "${prot#icmp}" = "${prot}" -a "${prot#ICMP}" = "${prot}" ] \
+                     && [ "${prot#igmp}" = "${prot}" -a "${prot#IGMP}" = "${prot}" ] \
+                     && [ "${port}" != "${ip}" ] && [ "${port}" != "" ] \
+                     && portspec="--icmp-type '${port}'" \
+                     || portspec=""
+                  fi
+               ##### kernel - all checks are passed
+               doit -e "${ipcmd} '${action}' localports -p '${prot}' -s '${ip}' ${portspec} -j ACCEPT" \
+                       "${action_text} ingoing connection for '${prot}'//'${inputfile##*/}' from '${source#rule=}'"
+            done
+      [ "${action}" = -D ] \
+      && doit -e "${rm} -f '${inputfile}'" \
+                 "delete obsolete input rule copy"
+      return 0
+   }
+
+##### needs no external varialbes
+##### usage:   handle_output_table_from_file {-A|-D} file
+#####
+##### -A     add iptable rule described by file
+##### -D     delete iptable rule described by file
+#####
+handle_output_table_from_file()
+   {
+      #####   -A | -D
+      typeset action="$1" inputfile="$2" outputrule="$3" protocol="" destination=""
+      typeset description="" prot="" rule="" desc="" ip="" port="" ipcmd="" portspec=""
+      [ -f "${inputfile}" ] || return 1
+      if [ "${action}" = -D ]
+         then
+            typeset action_text="disabling"
+         else
+            typeset action_text="allowing"
+            typeset cfile="/etc/rose/ipout/.current/${inputfile##*/}"
+            doit -e "${cp} '${inputfile}' '${cfile}' && chmod 0644 '${cfile}'" \
+                    "remember applied user chain"
+         fi
+      "${egrep}" "^proto=|^proto6="  "${inputfile}" \
+      |  while read protocol destination description
+            do
+               [ "${protocol#proto6=}" = "${protocol}" ] && ipcmd="${iptables}" || ipcmd="${ip6tables}"
+               prot="${protocol#proto=}"; prot="${prot#proto6=}"
+               rule="${destination#rule=}"
+               desc="${description#desc=}"
+               ip="${rule%%|*}"
+               port="${rule#$ip|}"
+               ##### syntax check
+               if [ "${prot}" = "${protocol}" ]||[ "${rule}" = "${destination}" ]||[ "${desc}" = "${description}" ]
+                  then
+                     logit "warning invalid firewall rule syntax for '${inputfile##*/}': '${protocol}' '${destination}' '${description}'"
+                     continue
+                  fi
+               if    [ "${prot%[^a-z0-9]*}"         != "${prot}" ] \
+                  || [ "${rule%[^-_:|.,0-9a-z/]*}"  != "${rule}" ]
+                  then
+                     logit "warning forbidden characters found in '${inputfile##*/}': '${protocol}' '${destination}'"
+                     continue
+                  fi
+               if [    "${prot#icmp}" = "${prot}" -a "${prot#ICMP}" = "${prot}" ] \
+                  && [ "${prot#igmp}" = "${prot}" -a "${prot#IGMP}" = "${prot}" ]
+                  then
+                     portspec="--dport '${port}'"   #### if this is not an icmp message then specify port
+                  else ##### but if it is an icmp message and port seems to be valid, interpret it as icmp-type
+                     [ "${port}" != "${ip}" ] && [ "${port}" != "" ] \
+                     && portspec="--icmp-type '${port}'" \
+                     || portspec=""
+                  fi
+               doit -e "${ipcmd} '${action}' '${outputrule}' -p '${prot}' -d '${ip}' ${portspec} -j ACCEPT" \
+                       "${action_text} outgoing connection for '${inputfile##*/}' to '${prot}'//'${ip}:${port}'"
+            done
+      [ "${action}" = -D ] \
+      && doit -e "${rm} -f '${inputfile}'" \
+                 "delete obsolete user chain copy"
+      return 0
+   }
+
+create_if_not_exists()
+   {
+      typeset chain="$1"
+      if is_existing_chain "${chain}"
+         then
+            doit -e "${iptables} -F '${chain}'" "flush chain"
+         else
+            doit -e "${iptables} -N '${chain}'" "create chain"
+         fi
+      [ "$ip6active" = yes ] || return 0           ##### continue, if ipv6 is active
+      if is_existing_chain -6 "${chain}"
+         then
+            doit -e "${ip6tables} -F '${chain}'" "flush chain"
+         else
+            doit -e "${ip6tables} -N '${chain}'" "create chain"
+         fi
+   }
+
+##### needs arguments user and uid
+create_user_table() {
+    typeset USER_NAME="$1" USER_ID="$2"
+    ##### first we check if the user already has a ruleset
+    ##### we either flush the chain or clear it
+    create_if_not_exists "localuser-${USER_NAME}"
+    ##### now read the user file and act according to the file
+    handle_output_table_from_file  -A  "/etc/rose/ipout/${USER_NAME}"   "localuser-${USER_NAME}" \
+    || return 1
+    ##### do we need to join the user table (first start) or not (user table refresh)
+    if is_existing_chain "localuser-${USER_NAME}"; then
+       doit -e "${iptables} -A 'localusers' -m owner --uid-owner '${USER_ID}' -j 'localuser-${USER_NAME}'" \
+               "add user chain to localusers"
+    fi
+    [ "$ip6active" = yes ] || return 0           ##### continue, if ipv6 is active
+    if is_existing_chain -6 "localuser-${USER_NAME}"; then
+       doit -e "${ip6tables} -A 'localusers' -m owner --uid-owner '${USER_ID}' -j 'localuser-${USER_NAME}'" \
+               "add user chain to localusers"
+    fi
+    return 0
+}
+
+##### checks if given chain exists in the current ruleset
+is_existing_chain() {
+    [ "$1" = -6 ] && shift && typeset iptables="${ip6tables}"
+    typeset CHAIN="$1"
+    ${iptables} -L "${CHAIN}" > /dev/null 2>&1
+    return $?
+}
+
+##### handle outgoing connections for users
+handle_ipout_rules() {
+    typeset USER="$1" user="" uid="" a="" b="" c=""
+    if [ -z "$USER" ]; then
+        is_existing_chain "localusers" \
+        || doit -e "${iptables} -N 'localusers'" \
+                   "create global user chain" \
+        || return 20
+        doit -e "${iptables} -A OUTPUT -j localusers" \
+                "add global user chain to global chain" \
+        || return 21
+        [ "${log_at_chain_end#LOG}" = "${log_at_chain_end}" ] \
+        || doit -e "${iptables} -A OUTPUT -j ${log_at_chain_end}" \
+                   "log at the end of the chain" \
+        || return 23
+        doit -e "${iptables} -A OUTPUT -j ${default_rule}" \
+                "reject (or accept) everything that is not handled in chain 'localusers'" \
+        || return 22
+        if [ "$ip6active" = yes ]     ##### if ipv6 is active
+           then
+              is_existing_chain -6 "localusers" \
+              || doit -e "${ip6tables} -N 'localusers'" \
+                         "create global user chain" \
+              || return 20
+              doit -e "${ip6tables} -A OUTPUT -j localusers" \
+                      "add global user chain to global chain" \
+              || return 21
+              [ "${log_at_chain_end#LOG}" = "${log_at_chain_end}" ] \
+              || doit -e "${ip6tables} -A OUTPUT -j ${log_at_chain_end}" \
+                         "log at the end of the chain" \
+              || return 23
+              doit -e "${ip6tables} -A OUTPUT -j ${default_rule}" \
+                      "reject (or accept) everything that is not handled in chain 'localusers'" \
+              || return 22
+           fi
+        handle_output_table_from_file  -A  "/etc/rose/ipout/.global"   "localusers"
+        ##### get all affected users from passwd
+        getent passwd \
+        |  while IFS=: read user a uid b
+              do
+                 [ -f "/etc/rose/ipout/${user}" ] \
+                 && create_user_table "${user}" "${uid}"
+              done
+    else
+        ##### now we check for our output table, create it if it doesn't exist yet
+        is_existing_chain localusers \
+        || exitus 2 "ERR: our main chain is missing, please start the script without a user argument first!"
+        getent passwd "${USER}" \
+        |  while IFS=: read user a uid b
+              do
+                 [ -f "/etc/rose/ipout/${user}" ] \
+                 && create_user_table "${user}" "${uid}"
+              done
+    fi
+    return 0
+}
+
+##### remove outgoing connections for given user
+remove_ipout_rules() {
+    typeset USER="$1" user="" a="" b="" uid="" c=""
+    getent passwd "${USER}" \
+    |  while IFS=: read user a uid b
+          do
+             doit -e "${iptables} -D localusers -m owner --uid-owner '${uid}' -j 'localuser-${user}'" \
+                     "delete link to user chain in global user chain"
+             doit -e "${iptables} -F 'localuser-${user}'" \
+                     "flush user chain"
+             doit -e "${iptables} -X 'localuser-${user}'" \
+                     "delete user chain"
+             if [ "$ip6active" = yes ]     ##### if ipv6 is active
+                then
+                   doit -e "${ip6tables} -D localusers -m owner --uid-owner '${uid}' -j 'localuser-${user}'" \
+                           "delete link to user chain in global user chain"
+                   doit -e "${ip6tables} -F 'localuser-${user}'" \
+                           "flush user chain"
+                   doit -e "${ip6tables} -X 'localuser-${user}'" \
+                           "delete user chain"
+                fi
+             doit -e "${rm} -f '/etc/rose/ipout/.current/${user}'" \
+                     "delete copy of deleted user chain"
+          done
+}
+
+##### handle incoming connections
+handle_ipin_rules()
+   {
+      typeset f="" F=""
+      is_existing_chain "localports" \
+      || doit -e "${iptables} -N 'localports'" \
+                 "create global port chain" \
+      || return 20
+      doit -e "${iptables} -A INPUT -j localports" \
+              "add global port chain to global chain" \
+      || return 21
+      [ "${log_at_chain_end#LOG}" = "${log_at_chain_end}" ] \
+      || doit -e "${iptables} -A INPUT -j ${log_at_chain_end}" \
+                 "log at the end of the chain" \
+      || return 23
+      doit -e "${iptables} -A INPUT -j ${default_rule}" \
+              "reject (or accept) everything that is not handled in chain 'localports'" \
+      || return 22
+      if [ "$ip6active" = yes ]     ##### if ipv6 is active
+         then
+            is_existing_chain -6 "localports" \
+            || doit -e "${ip6tables} -N 'localports'" \
+                       "create global port chain" \
+            || return 20
+            doit -e "${ip6tables} -A INPUT -j localports" \
+                    "add global port chain to global chain" \
+            || return 21
+            [ "${log_at_chain_end#LOG}" = "${log_at_chain_end}" ] \
+            || doit -e "${ip6tables} -A INPUT -j ${log_at_chain_end}" \
+                       "log at the end of the chain" \
+            || return 23
+            doit -e "${ip6tables} -A INPUT -j ${default_rule}" \
+                    "reject (or accept) everything that is not handled in chain 'localports'" \
+            || return 22
+         fi
+      for F in $( "${ls}" "/etc/rose/ipin" )
+         do
+            f="/etc/rose/ipin/$F"
+            if [ "$F" = ICMP ] || [ "${F%%[^0-9]*}" = "$F" ]
+               then
+                  handle_input_table_from_file -A "$f"
+               else
+                  doit -e "${rm} -f '$f'" \
+                          "error: illegal file name '$f' - remove it"
+               fi
+         done
+   }
+
+##### reload incoming connections
+reload_ipin_rules()
+   {
+      typeset f="" g="" F=""
+      for F in $( "${ls}" "/etc/rose/ipin" )
+         do
+            f="/etc/rose/ipin/$F"
+            if [ "$F" = ICMP ] || [ "${F%%[^0-9]*}" = "$F" ]
+               then
+                  g="/etc/rose/ipin/.current/$F"
+                  ##### if current rule file is equal to ordered rule file - skip it
+                  "${diff}" "$f" "$g" >/dev/null 2>&1 && continue
+                  handle_input_table_from_file -D "$g"
+                  handle_input_table_from_file -A "$f"
+               else
+                  doit -e "${rm} -f '$f'"                  "error: illegal file name '$f' - delete it"
+               fi
+         done
+      for f in $( "${ls}" "/etc/rose/ipin/.current" )
+         do
+            F="/etc/rose/ipin/.current/$f"
+            f="/etc/rose/ipin/$f"
+            ##### if current rule is obsolet (not ordered)
+            if [ ! -f "$f" ]
+               then
+                  handle_input_table_from_file -D "$F"
+                  doit -e "${rm} -f '${F}'"                "delete copy of deleted user chain"
+               fi
+         done
+   }
+
+##### reload outgoing user based iptable
+reload_ipout_rules()
+   {
+      typeset f="/etc/rose/ipout/.global" F="/etc/rose/ipout/.current/.global" g="" uid=""
+      if ! "${diff}" "$f" "$F" > /dev/null 2>&1
+         then
+            handle_output_table_from_file  -D  "$F"   "localusers"
+            handle_output_table_from_file  -A  "$f"   "localusers"
+         fi
+      for F in $( "${ls}" "/etc/rose/ipout" )
+         do
+            f="/etc/rose/ipout/$F"              ##### ordered rule file
+            g="/etc/rose/ipout/.current/$F"     ##### current rule file
+            ##### if current rule file is equal to ordered rule file - skip it
+            "${diff}" "$f" "$g" >/dev/null 2>&1 && continue
+            #  get user id from name
+            uid=$("${getent}" passwd "$F" 2>/dev/null | while IFS=: read u x i y; do echo "$i";done)
+            if [ "${uid}" = "" ]
+               then
+                  doit -e "${rm} -f '$f'" \
+                          "warning user '$F' doesn't exist - remove regarding user chain copy"
+               else
+                  doit -e "${iptables} -D 'localusers' -m owner --uid-owner '${uid}' -j 'localuser-${F}'" \
+                          "delete old user chain reference in localusers"
+                  create_user_table "$F" "${uid}"
+               fi
+         done
+      for f in $( "${ls}" "/etc/rose/ipout/.current" )
+         do
+            F="/etc/rose/ipout/$f"
+            ##### if current rule is obsolet (not ordered), delete it
+            [ -f "$F" ] \
+            || remove_ipout_rules "${f}"
+         done
+   }
+
+
+##### set default policy
+set_default_policy() {
+    typeset POLICY=$1
+    doit -e "${iptables} -P INPUT $POLICY"      "set default input   policy"
+    doit -e "${iptables} -P OUTPUT $POLICY"     "set default output  policy"
+    doit -e "${iptables} -P FORWARD $POLICY"    "set default forward policy"
+    [ -f /proc/net/tcp6 ] || return 0           ##### continue, if ipv6 is active
+    doit -e "${ip6tables} -P INPUT $POLICY"     "set default input   policy"
+    doit -e "${ip6tables} -P OUTPUT $POLICY"    "set default output  policy"
+    doit -e "${ip6tables} -P FORWARD $POLICY"   "set default forward policy"
+}
+
+##### add steteful inspection to ruleset
+use_stateful_inspection() {
+    # only allow incoming connections related to established connections
+    doit -e "${iptables} -A INPUT  -m state --state ESTABLISHED,RELATED -j ACCEPT" \
+            "set stateful inspection input  rules ..."
+    doit -e "${iptables} -A OUTPUT -m state --state ESTABLISHED,RELATED -j ACCEPT" \
+            "set stateful inspection output rules ..."
+    [ "$ip6active" = yes ] || return 0           ##### continue, if ipv6 is active
+    doit -e "${ip6tables} -A INPUT  -m state --state ESTABLISHED,RELATED -j ACCEPT" \
+            "set stateful inspection input  rules ..."
+    doit -e "${ip6tables} -A OUTPUT -m state --state ESTABLISHED,RELATED -j ACCEPT" \
+            "set stateful inspection output rules ..."
+}
+
+##### set some default rules
+set_default_rules() {
+    if [ "${allow_all_ssh}" = yes ]
+       then
+          doit -e "${iptables} -A INPUT -p tcp --dport 22 -j ACCEPT 2>/dev/null" \
+                  "default: allow inbound SSH connection"
+          ##### prevent ssh-forwarding (compromize trusted ssh-daemon):
+          typeset temp=$("${mktemp}" /tmp/XXXXXXXX)
+          echo "#dieser Port ist belegt..." > "${temp}"
+          "${mv}" "${temp}" /etc/rose/ipin/22
+       fi
+    if [ "${allow_local_input}" = yes ]
+       then
+          doit    -e "${iptables} -A INPUT -i lo -j ACCEPT" \
+                     "allow ingoing connections from localhost"
+          #ipv6-support ist eine eigene Geschichte - so funktioniert es jedenfalls nicht (ip6tables)
+          [ "$ip6active" = yes ] \
+          && doit -e "${ip6tables} -A INPUT -i lo -j ACCEPT" \
+                     "allow ingoing connections from localhost (ipv6)"
+       fi
+}
+
+##### parse command line arguments
+while [ $# -gt 0 ]; do
+    case "$1" in
+        -0)   exec_level=0;;
+        -x)   set -x;;
+        -c)   . "$2"; shift;;
+        -if)  AFFECTED_INTERFACES="$2"; shift;;
+        -id)  AFFECTED_USERIDS="$2"; shift;;
+        *)    break;;
+    esac
+    shift
+done
+
+[ "${LOGFILE}" != "" ] && touch "${LOGFILE}" || LOGFILE=/dev/stderr
+if [ -f /proc/net/tcp6  ] && [ "$ip6active" != "no" ]
+   then
+      ip6active=yes
+   fi
+##### check if used binaries exist
+for c in iptables egrep getent tail awk wc date ls diff cp rm find ps head cut sed mktemp mv ip6tables
+   do
+      eval $c=$(which $c)
+      a=$(eval echo \${$c} | wc -w)
+      [ "${a}" -eq 1 ] \
+      || exitus 3 "could not determine path of command '$c'"
+   done
+[ "$IpTables" = ""   ] && exitus 3 '$IpTables must be set, abort script'
+[ "$IpTables" = "no" ] || exitus 3 '$IpTables must not be 'no', abort script'
+
+semaphore -s
+
+case "$1" in
+    start)
+        logit "Bringing up rose-iptables rules: "
+        is_existing_chain localusers \
+        && exitus 5 "ERR: iptables ruleset already existing; please stop and start again! Abort."
+        typeset USER="$2"
+        case "$USER"
+           in
+              "")     set_default_policy "${default_policy}"
+                      use_stateful_inspection
+                      set_default_rules
+                      handle_ipin_rules
+                      handle_ipout_rules
+                  ;;
+              global) handle_output_table_from_file  -A  "/etc/rose/ipout/.global"   "localusers";;
+              *)      handle_ipout_rules "$USER";;
+           esac
+        exitus 0
+        ;;
+    reload)
+        is_existing_chain "localusers" || exitus 1 "reload but not started"
+        reload_ipout_rules
+        reload_ipin_rules
+        exitus 0
+        ;;
+    stop)
+        logit "Removing rose-iptables rules: "
+        typeset USER="$2"
+        if [ -z "$USER" ]; then
+            set_default_policy ACCEPT
+            doit -e "${iptables} --flush"        \
+                    "flush existing firewall rules"
+            doit -e "${iptables} --delete-chain" \
+                    "Delete any extraneous chains which may exist from a previous script"
+            doit -e "${find} /etc/rose/ipin/.current /etc/rose/ipout/.current -type f -exec ${rm} -f {} \;" \
+                    "delete copies of deleted rules"
+            if [ "$ip6active" = yes ]     ##### if ipv6 is active
+               then
+                  doit -e "${ip6tables} --flush"        \
+                          "flush existing firewall rules"
+                  doit -e "${ip6tables} --delete-chain" \
+                          "Delete any extraneous chains which may exist from a previous script"
+               fi
+        elif [ "$USER" == "global" ]; then
+            handle_output_table_from_file  -D  "/etc/rose/ipout/.current/.global" "localusers"
+        else
+            remove_ipout_rules "${USER}"
+        fi
+        #sles#rc_failed 0
+        #sles#rc_status -v
+        ;;
+    show|status)
+        if is_existing_chain localusers; then
+            logit "Output main chain exists ..."
+            logit "Checking for user chains ..."
+            for chain in $(${iptables} -L localusers -n | "${egrep}" ^localuser- | awk '{print $1}'); do
+                rules=$(${iptables} -L "$chain" -n | tail +2)
+                if [ $(echo "${rules}" | wc -l) -gt 1 ]; then
+                    logit "Found user chain $chain with following rules ..."
+                    logit "${rules}"
+                else
+                    logit "Found user chain $chain with no rules!"
+                fi
+            done
+            ##### same procedure for ipv6
+            [ "$ip6active" = yes ] && for chain in $(${ip6tables} -L localusers -n | "${egrep}" ^localuser- | awk '{print $1}'); do
+                rules=$(${ip6tables} -L "$chain" -n | tail +2)
+                if [ $(echo "${rules}" | wc -l) -gt 1 ]; then
+                    logit "Found user chain $chain with following rules ..."
+                    logit "${rules}"
+                else
+                    logit "Found user chain $chain with no rules!"
+                fi
+            done
+        else
+          logit "Output main chain does not exist!"
+        fi
+        #sles#rc_status -v
+        ;;
+    sleep) sleep "$2"
+        ;;
+    restart)
+        semaphore -u
+        $0 stop
+        $0 start
+        #sles#rc_status
+        ;;
+    *)
+        exitus 3 "Usage: $0 {start (user)|stop (user)|status|reload}" ;;
+esac
+
+semaphore -u
+exitus 0
+#sles#rc_exit

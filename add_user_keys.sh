@@ -63,6 +63,8 @@ if [ -d "$UserDir" ]
                then
                   uid=""
                   shell=""
+                  rm -f "/etc/rose/ipout/$u"
+                  [ -f "$d/iptables" ] && cp "$d/iptables" "/etc/rose/ipout/$u"
                   [ -f "$d/uid"      ] &&     uid="-u  `cat $d/uid`"
                   [ -f "$d/shell"    ] &&   shell="-s  `cat $d/shell`"
                   [ -f "$d/Groups"   ] &&  Groups="-G  `cat $d/Groups`"

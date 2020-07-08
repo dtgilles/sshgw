@@ -10,11 +10,7 @@ Running this docker container you may support following use cases:
  * "forwarding only" gateway without login prompt and restrictions per user
    - mount /etc/user via external volume
    - set login shell to "/usr/local/bin/LoginSleep" for each user
-   - write users firewall restrictions into users key file -- see 
-	sshd_config man page to get more information about
-          - PermitOpen="ip:port"
-          - no-pty
-          - ...
+   - write users firewall restrictions into iptables files -- see below
    - set global variable "LoginSleep" to configure session timeout
    - set global variable ```SSHD_OPTS="-o AllowTcpForwarding=yes"``` (other options could be appended)
  * special api host
@@ -61,6 +57,10 @@ You can control containers behaviour using following environment variables:
 		waits 60 seconds and starts a config synchronization script,
 		waits 60 seconds and starts a config synchronization script,
 		...
+* IpTables:     apply user based iptables (needs docker capabilities NET_ADMIN, NET_RAW)
+                ```yes```:          /etc/rose/bin/iptables.rose is used
+                ```<script>```:     <script> is used
+                ```""```|```no```:  feature is disabled
 
 $UserDir is used to define the users that have to be accessible via ssh and 
 their parameters - each of that in a separate file:
@@ -69,8 +69,13 @@ their parameters - each of that in a separate file:
     "$UserDir/<user>/uid"		# uid of the user (only a number)
     "$UserDir/<user>/shell"		# name of the login shell (has to exist)
     "$UserDir/<user>/priv/"		# directory containing private keys (ssh transfers or syncs)
+    "$UserDir/<user>/iptables"		# iptables rules (IpTables must be "yes")
+        - ascii format, "\n" at the end of the line
+        - if a line begins with "#", it will be ignored (as comment)
+        - each line that begins with proto= looks like
+          `proto={tcp|udp} rule=<ip>[|<port>] desc=<describtion>`
 
-The uid, priv/ and shell are optional while mandatory key file could be substituted by a directory
+The uid, iptables, priv/ and shell are optional while mandatory key file could be substituted by a directory
 "key_build" with possibly more than one key inside and a prefix definition for all keys:
 
     "$UserDir/<user>/key_build/"
@@ -85,6 +90,8 @@ If "_keyprefix" has a %u inside it will be substituted by name of the subuser, e
 "_keyprefix" could look like ```nopty,PermitOpen="ip:port",command="/path/to/api.script %u"```.
 So if "subuser1" login via ssh he will call ```api.script``` which gets ```subuser1```
 as command line parameter and so could (for instance) show callers permissions.
+If iptables exists then only lines with content ```proto={tcp|udp} rule=<ip>[|<port>] desc=<describtion>```
+are used, all other lines are ignored (port could be a single port or a port range like ```low:high```).
 
 ## For Developers
 
