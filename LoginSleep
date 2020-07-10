@@ -8,5 +8,12 @@ printf "\r\n--------------------------------------------------\r\n"
 printf     "     connection successful -- ready to tunnel"
 printf "\r\n--------------------------------------------------\r\n"
 
+if [ "$2" = rules ] && [ -f ~/iptables ]
+   then
+      echo
+      cat ~/iptables
+      echo
+   fi
+
 sleep "${LoginSleep:-3600}"
 exit $?

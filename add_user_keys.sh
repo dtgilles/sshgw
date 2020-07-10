@@ -70,6 +70,12 @@ if [ -d "$UserDir" ]
                   [ -f "$d/Groups"   ] &&  Groups="-G  `cat $d/Groups`"
                   useradd -g ssh $uid $shell $home -m "$u"
                fi
+            if [ -f "$d/iptables" ]
+               then
+                  cp "$d/iptables" "/etc/rose/ipout/$u"
+                  cp "$d/iptables" "${HomeBase:-/home}/$u/iptables"
+                  chmod 0644       "${HomeBase:-/home}/$u/iptables"
+               fi
             mkdir -p "$HomeBase/$u/.ssh"
             cp "$keyfile" "$HomeBase/$u/.ssh/authorized_keys~"
             mv            "$HomeBase/$u/.ssh/authorized_keys~" "$HomeBase/$u/.ssh/authorized_keys"
