@@ -571,7 +571,9 @@ set_default_policy() {
     doit -e "${iptables} -P INPUT $POLICY"      "set default input   policy"
     doit -e "${iptables} -P OUTPUT $POLICY"     "set default output  policy"
     doit -e "${iptables} -P FORWARD $POLICY"    "set default forward policy"
-    [ -f /proc/net/tcp6 ] || return 0           ##### continue, if ipv6 is active
+    ##### break this function if ipv6 is disabled
+    sysctl net.ipv6.conf.all.disable_ipv6 | grep -q " = 1" && return 0
+    ##### ...but following commands could cause warnings/error messages
     doit -e "${ip6tables} -P INPUT $POLICY"     "set default input   policy"
     doit -e "${ip6tables} -P OUTPUT $POLICY"    "set default output  policy"
     doit -e "${ip6tables} -P FORWARD $POLICY"   "set default forward policy"
@@ -599,14 +601,13 @@ set_default_rules() {
                   "default: allow inbound SSH connection"
           ##### prevent ssh-forwarding (compromize trusted ssh-daemon):
           typeset temp=$("${mktemp}" /tmp/XXXXXXXX)
-          echo "#dieser Port ist belegt..." > "${temp}"
+          echo "#this port is already in use..." > "${temp}"
           "${mv}" "${temp}" /etc/rose/ipin/22
        fi
     if [ "${allow_local_input}" = yes ]
        then
           doit    -e "${iptables} -A INPUT -i lo -j ACCEPT" \
                      "allow ingoing connections from localhost"
-          #ipv6-support ist eine eigene Geschichte - so funktioniert es jedenfalls nicht (ip6tables)
           [ "$ip6active" = yes ] \
           && doit -e "${ip6tables} -A INPUT -i lo -j ACCEPT" \
                      "allow ingoing connections from localhost (ipv6)"
@@ -627,8 +628,10 @@ while [ $# -gt 0 ]; do
 done
 
 [ "${LOGFILE}" != "" ] && touch "${LOGFILE}" || LOGFILE=/dev/stderr
-if [ -f /proc/net/tcp6  ] && [ "$ip6active" != "no" ]
+if (sysctl net.ipv6.conf.all.disable_ipv6 | grep -q " = 1") || [ "$ip6active" = "no" ]
    then
+      ip6active=no
+   else
       ip6active=yes
    fi
 ##### check if used binaries exist
@@ -639,8 +642,8 @@ for c in iptables egrep getent tail awk wc date ls diff cp rm find ps head cut s
       [ "${a}" -eq 1 ] \
       || exitus 3 "could not determine path of command '$c'"
    done
-[ "$IpTables" = ""   ] && exitus 3 '$IpTables must be set, abort script'
-[ "$IpTables" = "no" ] && exitus 3 '$IpTables must not be 'no', abort script'
+[ "$IpTables" = ""   ] && exitus 2 '$IpTables must be set, abort script'
+[ "$IpTables" = "no" ] && exitus 2 '$IpTables must not be 'no', abort script'
 
 semaphore -s
 

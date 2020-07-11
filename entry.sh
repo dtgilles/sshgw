@@ -110,10 +110,44 @@ for f in ${hostkeys}
 ##### then create them and distribute keys:
 /usr/local/bin/add_user_keys.sh
 
+print_ipout(){
+  printf "proto=${3:-tcp} rule=%-30s desc=%s\n" "$1" "$2"
+}
+generate_default_ipout()
+   {
+      [ -f /etc/rose/ipout/.global ] && return 0
+      #### allow name resolution (read from resolv.conf)
+      while read key value x
+         do
+            [ "$key" = nameserver ] || continue
+             print_ipout "$value|53" "name resolution" tcp
+             print_ipout "$value|53" "name resolution" udp
+         done \
+      <  /etc/resolv.conf \
+      >  /etc/rose/ipout/.global
+      #### allow package updates (install software if needed)
+      cat /etc/apt/sources.list /etc/apt/sources.list.d/* 2>/dev/null \
+      |  sed '/#/d; /^$/d; s/[:/]/ /g; s/  */ /g' \
+      |  cut -d \  -f 1-3 \
+      |  sort -u \
+      |  while read type proto hostname
+            do
+               case "$proto"
+                  in
+                     http) port=80;;
+                     https) port=443;;
+                     *) continue;;
+                  esac
+               print_ipout "$hostname|$port" "get new packages"
+            done \
+      >> /etc/rose/ipout/.global
+   }
+
 ##### if there is an iptables script definned, then call it and send it to background
 [ "$IpTables" = "yes" ] && export IpTables=/etc/rose/bin/iptables.rose
 if [ -f "$IpTables"   ] && [ -x "$IpTables" ]
    then
+      generate_default_ipout
       "$IpTables" start &
    fi
 
