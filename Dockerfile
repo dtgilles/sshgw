@@ -14,7 +14,7 @@ RUN    mkdir -p /var/run/sshd /etc/rose/ipin/.current /etc/rose/ipout/.current /
 
 COPY sshd_config     /etc/ssh/sshd_config
 COPY entry.sh        /entry.sh
-COPY LoginSleep      add_user_keys.sh   /usr/local/bin/
+COPY LoginSleep      add_user_keys.sh   init_ipout     /usr/local/bin/
 COPY iptables.rose   iptables.conf      /etc/rose/bin/
 
 ENV SSHD_OPTS	""
