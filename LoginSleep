@@ -8,10 +8,11 @@ printf "\r\n--------------------------------------------------\r\n"
 printf     "     connection successful -- ready to tunnel"
 printf "\r\n--------------------------------------------------\r\n"
 
-if [ "$2" = rules ] && [ -f ~/iptables ]
+file="/etc/rose/ipout/.current/$USER"
+if [ "$2" = rules ] && [ -f "$file" ]
    then
       echo
-      cat ~/iptables
+      cat "$file"
       echo
    fi
 
