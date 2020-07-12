@@ -703,9 +703,8 @@ case "$1" in
             logit "Output main chain exists ..."
             logit "Checking for user chains ..."
             for chain in $(${iptables} -L localusers -n | "${egrep}" ^localuser- | awk '{print $1}'); do
-                rules=$(${iptables} -L "$chain" -n | tail +2)
+                rules=$(${iptables} -L "$chain" -n)
                 if [ $(echo "${rules}" | wc -l) -gt 1 ]; then
-                    logit "Found user chain $chain with following rules ..."
                     logit "${rules}"
                 else
                     logit "Found user chain $chain with no rules!"
@@ -713,9 +712,8 @@ case "$1" in
             done
             ##### same procedure for ipv6
             [ "$ip6active" = yes ] && for chain in $(${ip6tables} -L localusers -n | "${egrep}" ^localuser- | awk '{print $1}'); do
-                rules=$(${ip6tables} -L "$chain" -n | tail +2)
+                rules=$(${ip6tables} -L "$chain" -n)
                 if [ $(echo "${rules}" | wc -l) -gt 1 ]; then
-                    logit "Found user chain $chain with following rules ..."
                     logit "${rules}"
                 else
                     logit "Found user chain $chain with no rules!"
