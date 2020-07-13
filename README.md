@@ -52,15 +52,17 @@ You can control containers behaviour using following environment variables:
 * LoginSleep:	if login shell /usr/local/bin/LoginSleep is used for some users
 		this variable sets the global session timeout -- default is 1 hour
 * SleepyTask:	there is one task that I could run for you (after sleepng X seconds)
-		-- regularly:  e.g. >>60  /root/bin/sync_config.sh<<
+		-- regularly:  e.g. ```60  /root/bin/sync_config.sh```
+
 		waits 60 seconds and starts a config synchronization script,
 		waits 60 seconds and starts a config synchronization script,
 		waits 60 seconds and starts a config synchronization script,
 		...
 * IpTables:     apply user based iptables (needs docker capabilities NET_ADMIN, NET_RAW)
+
                 ```yes```:          /etc/rose/bin/iptables.rose is used
-                ```<script>```:     <script> is used
-                ```""```|```no```:  feature is disabled
+                ```<script>```:     define another iptables script (will be removed in later releases)
+                ```""``` or ```no```:  feature is disabled
 
 $UserDir is used to define the users that have to be accessible via ssh and 
 their parameters - each of that in a separate file:
@@ -86,8 +88,8 @@ The uid, iptables, priv/ and shell are optional while mandatory key file could b
     "$UserDir/<user>/shell"		# name of the login shell (has to exist)
     "$UserDir/<user>/priv/"		# directory containing private keys (ssh transfers or syncs)
 
-If "_keyprefix" has a %u inside it will be substituted by name of the subuser, e.g.
-"_keyprefix" could look like ```nopty,PermitOpen="ip:port",command="/path/to/api.script %u"```.
+If "\_keyprefix" has a %u inside, it will be substituted by name of the subuser, e.g.
+"\_keyprefix" could look like ```nopty,PermitOpen="ip:port",command="/path/to/api.script %u"```.
 So if "subuser1" login via ssh he will call ```api.script``` which gets ```subuser1```
 as command line parameter and so could (for instance) show callers permissions.
 If iptables exists then only lines with content ```proto={tcp|udp} rule=<ip>[|<port>] desc=<describtion>```
@@ -110,4 +112,3 @@ in mind:
 
 * command line parameter of the api caller are stored by ssh in variable ```$SSH_ORIGINAL_COMMAND```
 * without command clause in authorized_keys arguments are stored in ```$*``` as usual
-
