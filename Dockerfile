@@ -9,7 +9,7 @@ RUN    apt-get update \
 
 RUN    mkdir -p /var/run/sshd /etc/rose/ipin/.current /etc/rose/ipout/.current /var/opt/rose /etc/rose/bin/ \
     && sed s/101/0/ /usr/sbin/policy-rc.d \
-    && rm -f /etc/ssh/*_key* \
+    && rm -f /etc/ssh/*_key* /etc/update-motd.d/* \
     && :> /etc/motd
 
 COPY sshd_config     /etc/ssh/sshd_config
