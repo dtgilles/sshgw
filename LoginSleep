@@ -4,17 +4,18 @@
 #####                   default=3600
 [ -f /etc/default/LoginSleep ] && source /etc/default/LoginSleep
 
-printf "\r\n--------------------------------------------------\r\n"
-printf     "     connection successful -- ready to tunnel"
-printf "\r\n--------------------------------------------------\r\n"
-
 file="/etc/rose/ipout/.current/$USER"
 if [ "$2" = rules ] && [ -f "$file" ]
    then
       echo
       cat "$file"
       echo
+      exit 0
    fi
+
+printf "\r\n--------------------------------------------------\r\n"
+printf     "     connection successful -- ready to tunnel"
+printf "\r\n--------------------------------------------------\r\n"
 
 sleep "${LoginSleep:-3600}"
 exit $?
