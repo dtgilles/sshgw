@@ -4,14 +4,22 @@
 #####                   default=3600
 [ -f /etc/default/LoginSleep ] && source /etc/default/LoginSleep
 
-file="/etc/rose/ipout/.current/$USER"
-if [ "$2" = rules ] && [ -f "$file" ]
-   then
-      echo
-      cat "$file"
-      echo
-      exit 0
-   fi
+case "$2"
+   in
+      rules)   file="/etc/rose/ipout/.current/$USER"
+               if [ -f "$file" ]
+                  then
+                     echo
+                     cat "$file"
+                     echo
+                     exit 0
+                  else
+                     printf "\n Sorry, no information available\n       probably there aren't any permissions granted to you\n\n"
+                     exit 1
+                  fi ;;
+      whoami)  echo "$USER"
+               exit 0;;
+   esac
 
 printf "\r\n--------------------------------------------------\r\n"
 printf     "     connection successful -- ready to tunnel"
